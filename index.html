@@ -304,24 +304,47 @@
             // 1. Get dimensions
             const videoWidth = video.videoWidth;
             const videoHeight = video.videoHeight;
-            const videoClientWidth = video.clientWidth;
-            const videoClientHeight = video.clientHeight;
+            
+            // Get bounding rects for accurate positioning
+            const videoRect = video.getBoundingClientRect();
+            const cropBoxRect = cropBox.getBoundingClientRect();
 
             // 2. Calculate scale factor between displayed size and actual video resolution
-            const scaleX = videoWidth / videoClientWidth;
-            const scaleY = videoHeight / videoClientHeight;
+            // We use the rect's width/height for the *displayed* size
+            const scaleX = videoWidth / videoRect.width;
+            const scaleY = videoHeight / videoRect.height;
 
-            // 3. Get crop box dimensions relative to the video element
-            const cropX = cropBox.offsetLeft;
-            const cropY = cropBox.offsetTop;
-            const cropWidth = cropBox.clientWidth;
-            const cropHeight = cropBox.clientHeight;
+            // 3. Calculate crop box position *relative* to the video element
+            // (cropBoxRect.top - videoRect.top) is the visual Y offset from the video's top
+            // (cropBoxRect.left - videoRect.left) is the visual X offset from the video's left
+            const cropX = (cropBoxRect.left - videoRect.left);
+            const cropY = (cropBoxRect.top - videoRect.top);
+            const cropWidth = cropBoxRect.width;
+            const cropHeight = cropBoxRect.height;
 
             // 4. Calculate source rectangle on the full-res video stream
-            const sx = cropX * scaleX;
-            const sy = cropY * scaleY;
+            // Clamp sx and sy to 0 to avoid negative values if crop box is slightly outside video
+            const sx = Math.max(0, cropX * scaleX);
+            const sy = Math.max(0, cropY * scaleY);
             const sw = cropWidth * scaleX;
             const sh = cropHeight * scaleY;
+
+            // Check for invalid dimensions which can cause the black image
+            if (videoWidth <= 0 || videoHeight <= 0 || videoRect.width <= 0 || videoRect.height <= 0 || sw <= 0 || sh <= 0) {
+                console.error("Invalid dimensions for capture:", {
+                    videoWidth, videoHeight,
+                    videoRectW: videoRect.width, videoRectH: videoRect.height,
+                    sw, sh
+                });
+                // Show an error to the user
+                previewScreen.classList.add('hidden');
+                cameraView.classList.add('hidden');
+                loadingScreen.classList.add('hidden');
+                startScreen.classList.remove('hidden');
+                // In a real app, use a modal, but for now, log and return
+                console.error("Capture failed due to invalid dimensions. Please try again.");
+                return;
+            }
 
             // 5. Set target (final) resolution. Max allowed is 530x690.
             // This aspect ratio (530/690 = 0.768) is within the 0.66-0.89 range.
@@ -467,3 +490,4 @@
 
 </body>
 </html>
+
