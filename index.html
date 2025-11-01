@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GATE Photo Capture Tool</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Use Inter font */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* Ensure consistent aspect ratio for video */
+        video {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        /* The main overlay container, sticks to the video feed */
+        #overlay-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Allows clicks to go through if needed */
+        }
+
+        /* The centered crop box, this defines the final image area */
+        #crop-box {
+            /* This aspect ratio is 3.5 / 4.5 = 0.777... which is within the 0.66-0.89 range */
+            aspect-ratio: 3.5 / 4.5;
+            
+            /* Size: 90% of the container's shorter dimension */
+            width: 90%;
+            height: auto;
+            
+            /* Center the box */
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            
+            /* Visual style */
+            border: 2px solid rgba(255, 255, 255, 0.9);
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6); /* Darken outside area */
+        }
+
+        /* 3x3 grid inside the crop box */
+        #grid-overlay {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            width: 100%;
+            height: 100%;
+            position: absolute;
+        }
+
+        /* Style for each grid cell */
+        .grid-cell {
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            position: relative;
+            color: white;
+            font-size: 10px;
+            opacity: 0.7;
+        }
+        
+        /* Position grid labels */
+        .grid-cell::before {
+            position: absolute;
+            top: 2px;
+            left: 4px;
+        }
+        
+        /* Grid cell labels */
+        .grid-cell:nth-child(1)::before { content: 'A1'; }
+        .grid-cell:nth-child(2)::before { content: 'B1'; }
+        .grid-cell:nth-child(3)::before { content: 'C1'; }
+        .grid-cell:nth-child(4)::before { content: 'A2'; }
+        .grid-cell:nth-child(5)::before { content: 'B2'; }
+        .grid-cell:nth-child(6)::before { content: 'C2'; }
+        .grid-cell:nth-child(7)::before { content: 'A3'; }
+        .grid-cell:nth-child(8)::before { content: 'B3'; }
+        .grid-cell:nth-child(9)::before { content: 'C3'; }
+
+        /* Dotted face guide */
+        #face-guide {
+            position: absolute;
+            /* Position to cover ~70% height, centered */
+            width: 65%;
+            height: 70%;
+            top: 22%; /* Start below the top grid row */
+            left: 50%;
+            transform: translateX(-50%);
+            border: 2px dotted #00f7ff;
+            border-radius: 50%; /* Oval shape */
+            opacity: 0.9;
+        }
+
+        #face-guide-text {
+            position: absolute;
+            top: -25px;
+            width: 100%;
+            text-align: center;
+            color: #00f7ff;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        
+        /* Custom spinner */
+        .loader {
+            width: 48px;
+            height: 48px;
+            border: 5px solid #FFF;
+            border-bottom-color: #4f46e5;
+            border-radius: 50%;
+            display: inline-block;
+            box-sizing: border-box;
+            animation: rotation 1s linear infinite;
+        }
+
+        @keyframes rotation {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-4">
+
+    <!-- Main App Container -->
+    <div class="w-full max-w-lg mx-auto bg-gray-800 rounded-lg shadow-xl overflow-hidden">
+
+        <!-- Header -->
+        <header class="p-4 border-b border-gray-700">
+            <h1 class="text-xl font-bold text-center">GATE Photo Tool</h1>
+        </header>
+
+        <!-- Initial Start Screen -->
+        <div id="start-screen" class="p-6 flex flex-col items-center">
+            <p class="text-center mb-4">This tool helps you capture a photo matching GATE requirements.</p>
+            <ul class="list-disc list-inside mb-6 text-sm text-gray-300">
+                <li>Use a plain white background.</li>
+                <li>Ensure good, even lighting with no shadows.</li>
+                <li>Look directly at the camera with a neutral expression.</li>
+                <li>Fit your face inside the blue dotted oval.</li>
+            </ul>
+            <button id="start-camera-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300">
+                Start Camera
+            </button>
+        </div>
+
+        <!-- Loading Screen -->
+        <div id="loading-screen" class="p-6 flex-col items-center justify-center hidden">
+            <div class="loader"></div>
+            <p class="text-center mt-4 text-gray-300">Starting camera...</p>
+        </div>
+
+        <!-- Camera View -->
+        <div id="camera-view" class="hidden">
+            <div class="relative bg-black">
+                <!-- Live video feed -->
+                <video id="video-feed" autoplay playsinline></video>
+                
+                <!-- Overlay Container -->
+                <div id="overlay-container">
+                    <!-- Centered Crop Box -->
+                    <div id="crop-box">
+                        <!-- 3x3 Grid -->
+                        <div id="grid-overlay">
+                            <div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div>
+                            <div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div>
+                            <div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div>
+                        </div>
+                        <!-- Face Guide -->
+                        <div id="face-guide">
+                            <div id="face-guide-text">Fit Face Here</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Controls -->
+            <div class="p-4 bg-gray-800 flex flex-col items-center space-y-3">
+                <button id="capture-btn" class="w-20 h-20 bg-white rounded-full border-4 border-gray-500 hover:border-indigo-500 transition"></button>
+                <button id="switch-camera-btn" class="text-sm text-indigo-400 hover:text-indigo-300">
+                    Switch Camera
+                </button>
+            </div>
+        </div>
+
+        <!-- Preview Screen -->
+        <div id="preview-screen" class="p-6 hidden">
+            <h2 class="text-lg font-semibold text-center mb-4">Preview & Validation</h2>
+            
+            <!-- This canvas shows the final cropped image -->
+            <canvas id="preview-canvas" class="w-full h-auto rounded-lg border border-gray-700" style="aspect-ratio: 3.5 / 4.5;"></canvas>
+            
+            <!-- Hidden canvas for processing -->
+            <canvas id="capture-canvas" class="hidden"></canvas>
+            
+            <!-- Validation Messages -->
+            <div id="validation-box" class="mt-4 p-3 bg-gray-700 rounded-lg">
+                <h3 class="font-semibold mb-2">Validation Status:</h3>
+                <ul class="text-sm space-y-1">
+                    <li id="val-resolution">Resolution: <span class="font-mono">...</span></li>
+                    <li id="val-aspect-ratio">Aspect Ratio: <span class="font-mono">...</span></li>
+                    <li id="val-size">File Size: <span class="font-mono">...</span></li>
+                </ul>
+                <p id="val-summary" class="mt-3 font-bold text-center"></p>
+            </div>
+
+            <!-- Preview Actions -->
+            <div class="flex gap-4 mt-6">
+                <button id="retake-btn" class="w-1/2 bg-gray-600 hover:bg-gray-500 text-white font-bold py-3 px-4 rounded-lg transition">
+                    Retake
+                </button>
+                <a id="download-btn" class="w-1/2 bg-green-600 text-white font-bold py-3 px-4 rounded-lg text-center transition opacity-50 pointer-events-none">
+                    Download
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- App Logic -->
+    <script>
+        // DOM Elements
+        const startScreen = document.getElementById('start-screen');
+        const loadingScreen = document.getElementById('loading-screen');
+        const cameraView = document.getElementById('camera-view');
+        const previewScreen = document.getElementById('preview-screen');
+        
+        const startBtn = document.getElementById('start-camera-btn');
+        const switchCameraBtn = document.getElementById('switch-camera-btn');
+        const captureBtn = document.getElementById('capture-btn');
+        const retakeBtn = document.getElementById('retake-btn');
+        const downloadBtn = document.getElementById('download-btn');
+        
+        const video = document.getElementById('video-feed');
+        const cropBox = document.getElementById('crop-box');
+        const previewCanvas = document.getElementById('preview-canvas');
+        const captureCanvas = document.getElementById('capture-canvas');
+
+        // Validation UI
+        const valResolution = document.getElementById('val-resolution');
+        const valAspectRatio = document.getElementById('val-aspect-ratio');
+        const valSize = document.getElementById('val-size');
+        const valSummary = document.getElementById('val-summary');
+
+        // State
+        let currentStream;
+        let facingMode = 'user'; // 'user' for front, 'environment' for back
+        let currentBlob = null;
+        
+        // --- Camera Functions ---
+
+        async function startCamera() {
+            startScreen.classList.add('hidden');
+            loadingScreen.classList.remove('hidden');
+            cameraView.classList.add('hidden');
+            previewScreen.classList.add('hidden');
+            
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+
+            try {
+                const constraints = {
+                    video: {
+                        facingMode: facingMode,
+                        // Request a higher resolution to get a good quality crop
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    }
+                };
+                
+                currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = currentStream;
+                
+                video.onloadedmetadata = () => {
+                    loadingScreen.classList.add('hidden');
+                    cameraView.classList.remove('hidden');
+                };
+
+            } catch (err) {
+                console.error("Error accessing camera:", err);
+                loadingScreen.classList.add('hidden');
+                startScreen.classList.remove('hidden');
+                // Use a modal here in a real app instead of alert
+                console.error("Could not access camera. Please check permissions.");
+            }
+        }
+
+        function switchCamera() {
+            facingMode = (facingMode === 'user') ? 'environment' : 'user';
+            startCamera();
+        }
+
+        // --- Capture & Process ---
+
+        function capturePhoto() {
+            // 1. Get dimensions
+            const videoWidth = video.videoWidth;
+            const videoHeight = video.videoHeight;
+            const videoClientWidth = video.clientWidth;
+            const videoClientHeight = video.clientHeight;
+
+            // 2. Calculate scale factor between displayed size and actual video resolution
+            const scaleX = videoWidth / videoClientWidth;
+            const scaleY = videoHeight / videoClientHeight;
+
+            // 3. Get crop box dimensions relative to the video element
+            const cropX = cropBox.offsetLeft;
+            const cropY = cropBox.offsetTop;
+            const cropWidth = cropBox.clientWidth;
+            const cropHeight = cropBox.clientHeight;
+
+            // 4. Calculate source rectangle on the full-res video stream
+            const sx = cropX * scaleX;
+            const sy = cropY * scaleY;
+            const sw = cropWidth * scaleX;
+            const sh = cropHeight * scaleY;
+
+            // 5. Set target (final) resolution. Max allowed is 530x690.
+            // This aspect ratio (530/690 = 0.768) is within the 0.66-0.89 range.
+            const targetWidth = 530;
+            const targetHeight = 690;
+            
+            captureCanvas.width = targetWidth;
+            captureCanvas.height = targetHeight;
+            
+            previewCanvas.width = targetWidth;
+            previewCanvas.height = targetHeight;
+
+            // 6. Draw the cropped image from video to the hidden canvas
+            const ctx = captureCanvas.getContext('2d');
+            ctx.drawImage(video, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
+            
+            // 7. Also draw to the visible preview canvas
+            const previewCtx = previewCanvas.getContext('2d');
+            previewCtx.drawImage(captureCanvas, 0, 0, targetWidth, targetHeight);
+
+            // 8. Stop camera and switch views
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+            cameraView.classList.add('hidden');
+            previewScreen.classList.remove('hidden');
+            
+            // 9. Validate the captured image
+            validateImage();
+        }
+
+        async function validateImage() {
+            let isValid = true;
+            
+            // --- Resolution ---
+            const width = captureCanvas.width;
+            const height = captureCanvas.height;
+            const resText = `${width}px x ${height}px`;
+            valResolution.innerHTML = resText;
+            if (width < 200 || width > 530 || height < 260 || height > 690) {
+                valResolution.classList.add('text-red-400');
+                valResolution.classList.remove('text-green-400');
+                isValid = false;
+            } else {
+                valResolution.classList.add('text-green-400');
+                valResolution.classList.remove('text-red-400');
+            }
+
+            // --- Aspect Ratio (width / height) ---
+            const ratio = width / height;
+            const ratioText = ratio.toFixed(3);
+            valAspectRatio.innerHTML = ratioText;
+            if (ratio < 0.66 || ratio > 0.89) {
+                valAspectRatio.classList.add('text-red-400');
+                valAspectRatio.classList.remove('text-green-400');
+                isValid = false;
+            } else {
+                valAspectRatio.classList.add('text-green-400');
+                valAspectRatio.classList.remove('text-red-400');
+            }
+
+            // --- File Size (5KB - 600KB) ---
+            // Try to get a blob with high quality first
+            currentBlob = await getCanvasBlob(captureCanvas, 'image/jpeg', 0.95);
+            let sizeKB = (currentBlob.size / 1024).toFixed(2);
+            
+            // If too large, reduce quality
+            if (currentBlob.size > 600000) {
+                currentBlob = await getCanvasBlob(captureCanvas, 'image/jpeg', 0.8);
+                sizeKB = (currentBlob.size / 1024).toFixed(2);
+            }
+            // If still too large (unlikely), reduce more
+            if (currentBlob.size > 600000) {
+                currentBlob = await getCanvasBlob(captureCanvas, 'image/jpeg', 0.7);
+                sizeKB = (currentBlob.size / 1024).toFixed(2);
+            }
+            
+            const sizeText = `${sizeKB} KB`;
+            valSize.innerHTML = sizeText;
+            
+            if (currentBlob.size < 5000 || currentBlob.size > 600000) {
+                valSize.classList.add('text-red-400');
+                valSize.classList.remove('text-green-400');
+                isValid = false;
+            } else {
+                valSize.classList.add('text-green-400');
+                valSize.classList.remove('text-red-400');
+            }
+
+            // --- Summary & Download ---
+            if (isValid) {
+                valSummary.innerText = "All checks passed!";
+                valSummary.classList.add('text-green-400');
+                valSummary.classList.remove('text-red-400');
+                
+                const imageUrl = URL.createObjectURL(currentBlob);
+                downloadBtn.href = imageUrl;
+                downloadBtn.download = 'GATE_Photo.jpg';
+                downloadBtn.classList.remove('opacity-50', 'pointer-events-none');
+            } else {
+                valSummary.innerText = "Validation Failed. Please retake.";
+                valSummary.classList.add('text-red-400');
+                valSummary.classList.remove('text-green-400');
+                downloadBtn.classList.add('opacity-50', 'pointer-events-none');
+            }
+        }
+        
+        // Helper function to get blob from canvas
+        function getCanvasBlob(canvas, mimeType, quality) {
+            return new Promise((resolve) => {
+                canvas.toBlob(resolve, mimeType, quality);
+            });
+        }
+
+        function retakePhoto() {
+            previewScreen.classList.add('hidden');
+            startCamera(); // Re-start the camera
+            
+            // Reset validation
+            valResolution.innerHTML = '...';
+            valAspectRatio.innerHTML = '...';
+            valSize.innerHTML = '...';
+            valSummary.innerText = '';
+            valResolution.classList.remove('text-green-400', 'text-red-400');
+            valAspectRatio.classList.remove('text-green-400', 'text-red-400');
+            valSize.classList.remove('text-green-400', 'text-red-400');
+            valSummary.classList.remove('text-green-400', 'text-red-400');
+            
+            downloadBtn.classList.add('opacity-50', 'pointer-events-none');
+            if (currentBlob) {
+                URL.revokeObjectURL(downloadBtn.href);
+                currentBlob = null;
+            }
+        }
+
+        // --- Event Listeners ---
+        startBtn.addEventListener('click', startCamera);
+        switchCameraBtn.addEventListener('click', switchCamera);
+        captureBtn.addEventListener('click', capturePhoto);
+        retakeBtn.addEventListener('click', retakePhoto);
+
+    </script>
+
+</body>
+</html>
